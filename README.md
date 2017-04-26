@@ -1,6 +1,6 @@
 # led-matrix-clock
 LED matrix clock with telegram bot
-
+ 
 # Hardware
 
 ## Bill of materials
@@ -60,4 +60,22 @@ GND
 SCL  --  D1
 SDA  --  D2
 ```
+
+# Casing
+
+The device is put together using four 8x8 RGB LED matrix modules: 
+![LED matrix 8x8](https://github.com/bratwoscht/led-matrix-clock/raw/master/casing/LED-Matrix%208x8.jpg "The LED-matrix 8x8")
+
+The matrix is held by a frame:
+![matrix frame](https://github.com/bratwoscht/led-matrix-clock/raw/master/casing/Matrixgitter.jpg "The matrix frame")
+
+In front of the frame I put acrylic glass pane with 271 x 71 x 3 mm
+The whole device is held together by four of these clips:
+![clip](https://github.com/bratwoscht/led-matrix-clock/raw/master/casing/Klammer.jpg "The clip")
+
+Voila! The whole device:
+![front view](https://github.com/bratwoscht/led-matrix-clock/raw/master/casing/Gesamtbauwerk_vorne.jpg "The whole device front view")
+
+![back view](https://github.com/bratwoscht/led-matrix-clock/raw/master/casing/Gesamtbauwerk_hinten.jpg "The whole device back view")
+
 
