@@ -1,6 +1,9 @@
 # led-matrix-clock
 LED matrix clock with telegram bot
- 
+
+![device front](https://github.com/bratwoscht/led-matrix-clock/raw/master/pictures/device_front.jpg "device front")
+![device back](https://github.com/bratwoscht/led-matrix-clock/raw/master/pictures/device_back.jpg "device back")
+
 # Hardware
 
 ## Bill of materials
