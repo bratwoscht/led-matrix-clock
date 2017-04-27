@@ -1,12 +1,8 @@
-
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
-
-//needed for library
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include "WiFiManager.h"          //https://github.com/tzapu/WiFiManager
 #include <WiFiClientSecure.h>
-#include <ArduinoJson.h>
 #include <ESP8266mDNS.h>
 #include <Ticker.h> //for LED status
 #include <Adafruit_GFX.h>
@@ -15,8 +11,6 @@
 #include <Wire.h>
 #include <EEPROM.h>
 #include "LM75.h"
-//#include "fonts/pixel3x4.h"
-//#include <Fonts/FreeSans9pt7b.h>
 #include "fonts/pixel5pt7b.h"
 #include "fonts/pixel3x5.h"
 #include "NTPClient_ch.h"
@@ -24,15 +18,6 @@
 
 
 /* Todo:
- *  EEPROM
- *  Umlaute in Telegram-Nachrichten
- *  Umbau Telegram auf asynchron
- *  Nachrichten unendlich durchscrollen
- *  ds-tools.local umbenennen (webseite u.s.w.)
- *  Knöpfe auswerten + Bedienkonzept
- *   
- *   
- *  Telegram Konfiguration (Botfather)
  *  Farbsets definieren
  *  Farbwahl auf HSB
  *  
@@ -75,12 +60,9 @@ LM75 sensor;
 #define WHITE    0xFFFF
 
 #define MAXCLOCKFACE 7
+#define MAXSELECTEDCOLOR 11 // max color number+1
 
 #define round(x) ((x)>=0?(long)((x)+0.5):(long)((x)-0.5))
-
-const size_t bufferSize = JSON_OBJECT_SIZE(1) + JSON_OBJECT_SIZE(2) + 500;
-DynamicJsonBuffer jsonBuffer(bufferSize);
-const char* sessionToken = "";
 
 Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(32, 8, PIN,
                             NEO_MATRIX_TOP     + NEO_MATRIX_RIGHT +
@@ -90,8 +72,6 @@ Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(32, 8, PIN,
 const uint16_t colors[] = {
   matrix.Color(255, 0, 0), matrix.Color(0, 255, 0), matrix.Color(0, 0, 255)
 };
-
-//#define BOTtoken "334204835:AAG-lutKIHNsSFkztYbLF-lozD-3_ONbZQ0"  //token of BOT
 
 TelegramBOT bot("");
 #define SCROLL_RESET 16380
@@ -223,6 +203,38 @@ void Bot_ExecMessages() {
       eep.data.clockface = val.toInt();
       saveEEPROM();
     }
+    if (cmd == "/v") {
+      String val = bot.message[i][5].substring(3, bot.message[i][5].length());
+      bot.sendMessage(bot.message[i][4], "Colorset " + val, "");
+      eep.data.selectedcolor = val.toInt();
+      if (eep.data.selectedcolor >= MAXSELECTEDCOLOR)
+        eep.data.selectedcolor = 0;
+      selectColor();
+      saveEEPROM();
+    }
+    if (cmd == "/b") {
+      String val = bot.message[i][5].substring(3, bot.message[i][5].length());
+      bot.sendMessage(bot.message[i][4], "Brightness " + val, "");
+      int16_t tmp = val.toInt();
+      if (tmp < 1) tmp = 1;
+      if (tmp > 255) tmp = 255;
+      eep.data.maxBrightness = tmp;
+      saveEEPROM();
+    }
+    if (cmd == "/t") {
+      String val = bot.message[i][5].substring(3, bot.message[i][5].length());
+      val.replace(",",".");
+      float tmp = val.toFloat();
+      int16_t itmp = round(tmp*10);
+      int16_t tmpoffset = itmp - sensor_temperature;
+      if (tmpoffset < -150) tmpoffset = -150;
+      if (tmpoffset > 150) tmpoffset = 150;
+      Serial.println("Temperature offset is now " + String(tmpoffset));
+//      bot.sendMessage(bot.message[i][4], "Temperature offset is now " + String(tmpoffset), "");
+      bot.sendMessage(bot.message[i][4], "Set current temperature to " + val + ", offset=" + tmpoffset + " [1/10deg]", "");
+      eep.data.temperatureOffset = tmpoffset;
+      saveEEPROM();
+    }    
     if (cmd == "/c") {
       String space = bot.message[i][5].substring(2, 3);
       String colNo,rgb,val;
@@ -274,23 +286,32 @@ void Bot_ExecMessages() {
       if (msg == "") {
         _repeatmessage = 0;
         show = 1;
-        bot.sendMessage(bot.message[i][4], "Message deleted", "");
+        bot.sendMessage(bot.message[i][4], F("Message deleted"), "");
       } else {
-        Serial.println("Nachricht: "+msg);
+//        Serial.println("Nachricht: "+msg);
         scrollmessage = convertUnicodeToASCII(msg);
         _repeatmessage = 1;
-        Serial.println("nach Uni.: "+scrollmessage);
+//        Serial.println("nach Uni.: "+scrollmessage);
         bot.sendMessage(bot.message[i][4], "Message: " + msg, "");
         _scrmsgcnt=SCROLL_RESET;
         show = 2;
       }
     }
     if ( (cmd == "/s") || (cmd == "/h") ) {
-      bot.sendMessage(bot.message[i][4], "Welcome to LED Matrix Clock", "");
+      bot.sendMessage(bot.message[i][4], F("Welcome to LED Matrix Clock"), "");
+      bot.sendMessage(bot.message[i][4], F("/m msg: send message msg"), "");
+      bot.sendMessage(bot.message[i][4], F("/m : /m without any text deletes current message"), "");
+      bot.sendMessage(bot.message[i][4], F("/b x: set max brightness to x [1..255]"), "");
+      bot.sendMessage(bot.message[i][4], F("/t x: calibrate temperature to current temperature x"), "");
+      bot.sendMessage(bot.message[i][4], F("/i : MORE INFO"), "");
+    }
+    if (cmd == "/i") {
       bot.sendMessage(bot.message[i][4], "/f x: switch to clockface x [1.."+String(MAXCLOCKFACE)+"]", "");
-      bot.sendMessage(bot.message[i][4], "/c : change color. 6 colors can be changed, each has red (r), green (r) and blue (r) components. To change color 1 red to value 200, type: /c 1r200. Value range [0..255]", "");
-      bot.sendMessage(bot.message[i][4], "/m msg: send message msg", "");
-      bot.sendMessage(bot.message[i][4], "/m : /m without any text deletes current message", "");
+      bot.sendMessage(bot.message[i][4], "/v x: switch to color set x [0.."+String(MAXSELECTEDCOLOR-1)+"],", "");
+      bot.sendMessage(bot.message[i][4], F("0 is the individual set which can be changed using /c"), "");
+      bot.sendMessage(bot.message[i][4], F("/c : change color. 6 colors [1..6] can be changed, each has"), "");
+      bot.sendMessage(bot.message[i][4], F("red (r), green (r) and blue (r) components. To change color 1 red"), "");
+      bot.sendMessage(bot.message[i][4], F("to value 200, type: /c 1r200. Value range [0..255]"), "");
     }
   }
   bot.message[0][0] = "";   // All messages have been replied - reset new messages
@@ -352,23 +373,51 @@ void handleTelegram() {
 }
 
 void handleOptions() {
-  String p1r = "255";
-  String p1g = "0";
-  String p1b = "0";
-  String p2r = "0";
-  String p2g = "255";
-  String p2b = "0";
-  String p3r = "0";
-  String p3g = "0";
-  String p3b = "255";
-  String wf = "1"; // clockface
-  String bright = "255";
+  String p1r = String(((eep.data.p1i & 0xf800) >> 8));
+  String p1g = String(((eep.data.p1i & 0x7e0) >> 3));
+  String p1b = String(((eep.data.p1i & 0x1f) << 3));
+  String p2r = String(((eep.data.p2i & 0xf800) >> 8));
+  String p2g = String(((eep.data.p2i & 0x7e0) >> 3));
+  String p2b = String(((eep.data.p2i & 0x1f) << 3));
+  String p3r = String(((eep.data.p3i & 0xf800) >> 8));
+  String p3g = String(((eep.data.p3i & 0x7e0) >> 3));
+  String p3b = String(((eep.data.p3i & 0x1f) << 3));
+  String p4r = String(((eep.data.p4i & 0xf800) >> 8));
+  String p4g = String(((eep.data.p4i & 0x7e0) >> 3));
+  String p4b = String(((eep.data.p4i & 0x1f) << 3));
+  String p5r = String(((eep.data.p5i & 0xf800) >> 8));
+  String p5g = String(((eep.data.p5i & 0x7e0) >> 3));
+  String p5b = String(((eep.data.p5i & 0x1f) << 3));
+  String p6r = String(((eep.data.p6i & 0xf800) >> 8));
+  String p6g = String(((eep.data.p6i & 0x7e0) >> 3));
+  String p6b = String(((eep.data.p6i & 0x1f) << 3));
+  String wf = String(eep.data.clockface); // clockface
+  delay(0);
+/*
+      switch (colNo.toInt()) {
+        case 1: col = eep.data.p1i; break;
+        case 2: col = eep.data.p2i; break;
+        case 3: col = eep.data.p3i; break;
+        case 4: col = eep.data.p4i; break;
+        case 5: col = eep.data.p5i; break;
+        case 6: col = eep.data.p6i; break;
+      }
+      uint16_t col_r = ((col & 0xf800) >> 8);
+      uint16_t col_g = ((col & 0x7e0) >> 3);
+      uint16_t col_b = ((col & 0x1f) << 3);
+      if (rgb == "r")
+        col_r = val.toInt();
+      if (rgb == "g")
+        col_g = val.toInt();
+      if (rgb == "b")
+        col_b = val.toInt();
+
+*/
 
   for ( uint8_t i = 0; i < server.args(); i++ ) {
+    delay(0);
     if (server.argName(i)[0] == 'w')
       wf = server.arg(i);
-    if (server.argName(i)[0] == 'b')
-      bright = server.arg(i);
     if (server.argName(i)[0] == 'p') {
       if (server.argName(i)[1] == '1') {
         if (server.argName(i)[2] == 'r')
@@ -394,17 +443,40 @@ void handleOptions() {
         if (server.argName(i)[2] == 'b')
           p3b = server.arg(i);
       }
+      if (server.argName(i)[1] == '4') {
+        if (server.argName(i)[2] == 'r')
+          p4r = server.arg(i);
+        if (server.argName(i)[2] == 'g')
+          p4g = server.arg(i);
+        if (server.argName(i)[2] == 'b')
+          p4b = server.arg(i);
+      }
+      if (server.argName(i)[1] == '5') {
+        if (server.argName(i)[2] == 'r')
+          p5r = server.arg(i);
+        if (server.argName(i)[2] == 'g')
+          p5g = server.arg(i);
+        if (server.argName(i)[2] == 'b')
+          p5b = server.arg(i);
+      }
+      if (server.argName(i)[1] == '6') {
+        if (server.argName(i)[2] == 'r')
+          p6r = server.arg(i);
+        if (server.argName(i)[2] == 'g')
+          p6g = server.arg(i);
+        if (server.argName(i)[2] == 'b')
+          p6b = server.arg(i);
+      }
     }
   }
-
-  //  matrix.fillScreen(0);
-  matrix.setBrightness(bright.toInt());
 
   color1 = ((p1r.toInt() >> 3) << 11) | ((p1g.toInt() >> 2) << 5) | (p1b.toInt() >> 3);
   color2 = ((p2r.toInt() >> 3) << 11) | ((p2g.toInt() >> 2) << 5) | (p2b.toInt() >> 3);
   color3 = ((p3r.toInt() >> 3) << 11) | ((p3g.toInt() >> 2) << 5) | (p3b.toInt() >> 3);
   eep.data.clockface = wf.toInt();
+  delay(0);
   saveEEPROM();
+  delay(0);
   /*
     Serial.print("p1:");
     Serial.printlncolor1);
@@ -429,32 +501,88 @@ void handleOptions() {
   page += FPSTR(HTTP_SCRIPT);
   page += FPSTR(HTTP_STYLE);
   page += FPSTR(HTTP_HEAD_END);
-  page += "<h1>";
-  page += "LED Matrix Clock - colors";
-  page += "</h1>";
+  page += F("<h1>");
+  page += F("LED Matrix Clock - colors");
+  page += F("</h1>");
   page += F("<h3>LEDs</h3>");
+  page += F("Diese seite sorgt derzeit fuer Probleme, die Uhr stuerzt oefter ab.");
+  delay(0);
 
-  page += "<br/><form method='post' action='options'>";
-  page += "Clockface: <input id='wf' name='wf' length=1 value='" + wf + "'><br/>";
-  page += "Helligkeit: <input id='bright' name='bright' length=3 value='" + bright + "'><br/>";
-  page += "<hr>";
-  page += "Farbe 1 rot: <input id='p1r' name='p1r' length=3 value='" + p1r + "'><br/>";
-  page += "Farbe 1 gr&uuml;n: <input id='p1g' name='p1g' length=3 value='" + p1g + "'><br/>";
-  page += "Farbe 1 blau: <input id='p1b' name='p1b' length=3 value='" + p1b + "'><br/>";
-  page += "<hr>";
-  page += "Farbe 2 rot: <input id='p2r' name='p2r' length=3 value='" + p2r + "'><br/>";
-  page += "Farbe 2 gr&uuml;n: <input id='p2g' name='p2g' length=3 value='" + p2g + "'><br/>";
-  page += "Farbe 2 blau: <input id='p2b' name='p2b' length=3 value='" + p2b + "'><br/>";
-  page += "<hr>";
-  page += "Farbe 3 rot: <input id='p3r' name='p3r' length=3 value='" + p3r + "'><br/>";
-  page += "Farbe 3 gr&uuml;n: <input id='p3g' name='p3g' length=3 value='" + p3g + "'><br/>";
-  page += "Farbe 3 blau: <input id='p3b' name='p3b' length=3 value='" + p3b + "'><br/>";
-  page += "<hr>";
-  page += "<br/><button type='submit'>setzen</button></form><br/>";
+  page += F("<br/><form method='post' action='options'>");
+  page += F("Clockface: <input id='wf' name='wf' length=1 value='");
+  page += wf;
+  page += F("'><br/>");
+  page += F("<hr>");
+  page += F("Farbe 1 rot: <input id='p1r' name='p1r' length=3 value='");
+  page += p1r;
+  page += F("'><br/>");
+  page += F("Farbe 1 gr&uuml;n: <input id='p1g' name='p1g' length=3 value='");
+  page += p1g;
+  page += F("'><br/>");
+  page += F("Farbe 1 blau: <input id='p1b' name='p1b' length=3 value='");
+  page += p1b;
+  page += F("'><br/>");
+  page += F("<hr>");
+  page += F("Farbe 2 rot: <input id='p2r' name='p2r' length=3 value='");
+  page += p2r;
+  page += F("'><br/>");
+  page += F("Farbe 2 gr&uuml;n: <input id='p2g' name='p2g' length=3 value='");
+  page += p2g;
+  page += F("'><br/>");
+  page += F("Farbe 2 blau: <input id='p2b' name='p2b' length=3 value='");
+  page += p2b;
+  page += F("'><br/>");
+  delay(0);
+  page += F("<hr>");
+  page += F("Farbe 3 rot: <input id='p3r' name='p3r' length=3 value='");
+  page += p3r;
+  page += F("'><br/>");
+  page += F("Farbe 3 gr&uuml;n: <input id='p3g' name='p3g' length=3 value='");
+  page += p3g;
+  page += F("'><br/>");
+  page += F("Farbe 3 blau: <input id='p3b' name='p3b' length=3 value='");
+  page += p3b;
+  page += F("'><br/>");
+  page += F("<hr>");
+  page += F("Farbe 4 rot: <input id='p4r' name='p4r' length=3 value='");
+  page += p4r;
+  page += F("'><br/>");
+  page += F("Farbe 4 gr&uuml;n: <input id='p4g' name='p4g' length=3 value='");
+  page += p4g;
+  page += F("'><br/>");
+  page += F("Farbe 4 blau: <input id='p4b' name='p4b' length=3 value='");
+  page += p4b;
+  page += F("'><br/>");
+  delay(0);
+  page += F("<hr>");
+  page += F("Farbe 5 rot: <input id='p5r' name='p5r' length=3 value='");
+  page += p5r;
+  page += F("'><br/>");
+  page += F("Farbe 5 gr&uuml;n: <input id='p5g' name='p5g' length=3 value='");
+  page += p5g;
+  page += F("'><br/>");
+  page += F("Farbe 5 blau: <input id='p5b' name='p5b' length=3 value='");
+  page += p5b;
+  page += F("'><br/>");
+  page += F("<hr>");
+  page += F("Farbe 6 rot: <input id='p6r' name='p6r' length=3 value='");
+  page += p6r;
+  page += F("'><br/>");
+  page += F("Farbe 6 gr&uuml;n: <input id='p6g' name='p6g' length=3 value='");
+  page += p6g;
+  page += F("'><br/>");
+  page += F("Farbe 6 blau: <input id='p6b' name='p6b' length=3 value='");
+  page += p6b;
+  page += F("'><br/>");
+  delay(0);
+  page += F("<hr>");
+  page += F("<br/><button type='submit'>setzen</button></form><br/>");
 
+  delay(0);
   page += FPSTR(HTTP_END);
 
   server.send(200, "text/html", page);
+  delay(0);
 }
 
 void handleRoot() {
@@ -492,11 +620,19 @@ void handleNotFound() {
 }
 
 #define MAXTEMPHIST 16
-int _tempHistory[MAXTEMPHIST] = {0}; /* history of the last values used for averaging */
-int _tempHP = 0; /* actual write position in history buffer */
+int16_t _tempHistory[MAXTEMPHIST] = {0}; /* history of the last values used for averaging */
+int16_t _tempHP = 0; /* actual write position in history buffer */
+
+#define MAXLDRHIST 16
+uint8_t _ldrHistory[MAXLDRHIST] = {0}; /* history of the last values used for averaging */
+uint8_t _ldrHP = 0; /* actual write position in history buffer */
 
 void setup() {
   String ssid = "ledclock_" + String(ESP.getChipId());
+  Serial.begin(115200);
+  Serial.print("Free Heap: ");
+  Serial.println(ESP.getFreeHeap());
+
   matrix.begin();
   matrix.setTextWrap(false);
   //  matrix.setFont(&pixel3x4);
@@ -512,7 +648,6 @@ void setup() {
   matrix.show();
 
   // put your setup code here, to run once:
-  Serial.begin(115200);
   Wire.begin();
 
 
@@ -614,10 +749,15 @@ void setup() {
     saveEEPROM();
   }
 
-  int16_t tmp = round(sensor.temp() * 10) + eep.data.temperatureOffset;
+  int16_t tmp = round(sensor.temp() * 10);
   for (uint8_t i = 0; i < MAXTEMPHIST; i++)
     _tempHistory[i] = tmp; // first read: fill buffer
   sensor_temperature = tmp;
+
+  uint16_t ldr = analogRead(A0) / 4;
+  for (uint8_t i = 0; i < MAXLDRHIST; i++) {
+    _ldrHistory[i] = ldr; // first read: fill buffer
+  }
 
   selectColor();
   bot.setToken(eep.data.BotToken);
@@ -758,7 +898,7 @@ void clockface3(int th, int tm, int ts) { // Uhr groß mit Sekundenpunkt, ohne D
   matrix.print(str);
 
   if ((ts % 2) == 0) {
-    matrix.drawPixel(1 + (ts >> 1), 7, color3);
+    matrix.drawPixel(1 + (ts >> 1), 7, color4);
   }
 
   messageReminder();
@@ -787,7 +927,7 @@ void clockface4(int th, int tm, int ts) {
   str[0] = (tm % 10) + '0';
   matrix.print(str);
 
-  matrix.setTextColor(color3);
+  matrix.setTextColor(color4);
   matrix.setCursor(22, 1);
   str[0] = (ts / 10) + '0';
   matrix.print(str);
@@ -805,7 +945,7 @@ void clockface5(int th, int tm, int ts) {
   matrix.fillScreen(0);
   char str[2] = " ";
 
-  matrix.setTextColor(color1);
+  matrix.setTextColor(color1); // hour
   matrix.setCursor(1, 1);
   str[0] = (th / 10) + '0';
   matrix.print(str);
@@ -813,10 +953,10 @@ void clockface5(int th, int tm, int ts) {
   str[0] = (th % 10) + '0';
   matrix.print(str);
 
-  matrix.drawPixel(10, 2, color4);
-  matrix.drawPixel(10, 4, color4);
+  matrix.drawPixel(10, 2, color3);
+  matrix.drawPixel(10, 4, color3);
 
-  matrix.setTextColor(color2);
+  matrix.setTextColor(color2); // min
   matrix.setCursor(11, 1);
   str[0] = (tm / 10) + '0';
   matrix.print(str);
@@ -827,7 +967,7 @@ void clockface5(int th, int tm, int ts) {
   matrix.drawPixel(20, 2, color5);
   matrix.drawPixel(20, 4, color5);
 
-  matrix.setTextColor(color3);
+  matrix.setTextColor(color4); // sec
   matrix.setCursor(21, 1);
   str[0] = (ts / 10) + '0';
   matrix.print(str);
@@ -847,7 +987,7 @@ void clockface6(int th, int tm, int ts) {
 
   matrix.setTextColor(color4);
   matrix.setCursor(-1, 1);
-  int16_t avgtmp = sensor_temperature;
+  int16_t avgtmp = sensor_temperature + eep.data.temperatureOffset;
   if (avgtmp < 0) avgtmp = 0;
   // zehner
   str[0] = (avgtmp / 100) + '0';
@@ -862,13 +1002,6 @@ void clockface6(int th, int tm, int ts) {
   // nachkomma
   str[0] = (avgtmp % 10) + '0';
   matrix.print(str);
-
-  /*
-      matrix.drawPixel(12,1,p3i);
-      matrix.drawPixel(12,2,p3i);
-      matrix.drawPixel(13,1,p3i);
-      matrix.drawPixel(13,2,p3i);
-  */
 
   matrix.drawPixel(12, 1, color5);
 
@@ -910,10 +1043,10 @@ void clockface7(int th, int tm, int ts) {
   matrix.fillScreen(0);
   char str[2] = " ";
 
-  int16_t avgtmp = sensor_temperature + 5; // round to full degrees
+  int16_t avgtmp = (sensor_temperature + eep.data.temperatureOffset) + 5; // round to full degrees
   if (avgtmp < 0) avgtmp = 0;
 
-  matrix.setTextColor(color4);
+  matrix.setTextColor(color4); // color 4 = degrees
   matrix.setCursor(-1, 1);
   str[0] = (avgtmp / 100) + '0';
   if (str[0] != '0')
@@ -922,14 +1055,7 @@ void clockface7(int th, int tm, int ts) {
   str[0] = ((avgtmp % 100) / 10) + '0';
   matrix.print(str);
 
-  /*
-      matrix.drawPixel(12,1,p3i);
-      matrix.drawPixel(12,2,p3i);
-      matrix.drawPixel(13,1,p3i);
-      matrix.drawPixel(13,2,p3i);
-  */
-
-  matrix.drawPixel(8, 1, color5);
+  matrix.drawPixel(8, 1, color5); // color 5 = °C
 
   matrix.drawPixel(9, 3, color5);
   matrix.drawPixel(10, 3, color5);
@@ -938,7 +1064,7 @@ void clockface7(int th, int tm, int ts) {
   matrix.drawPixel(10, 5, color5);
 
 
-  matrix.setTextColor(color1);
+  matrix.setTextColor(color1); // color 1 = hour
   matrix.setCursor(14, 1);
   str[0] = (th / 10) + '0';
   matrix.print(str);
@@ -947,11 +1073,11 @@ void clockface7(int th, int tm, int ts) {
   matrix.print(str);
 
   if ((ts % 2) == 0) {
-    matrix.drawPixel(23, 2, color3);
+    matrix.drawPixel(23, 2, color3); // color 3 = :
     matrix.drawPixel(23, 4, color3);
   }
 
-  matrix.setTextColor(color2);
+  matrix.setTextColor(color2); // color 2 = min
   matrix.setCursor(24, 1);
   str[0] = (tm / 10) + '0';
   matrix.print(str);
@@ -1059,15 +1185,30 @@ void do_scrollmessage() {
 
 void doLDR() {
   static uint32_t last=0;
+  uint16_t sensor_ldr = 0;
   if ((millis()-last) > 1000) {
     last = millis();
-    uint16_t ldr = analogRead(A0);
+    uint16_t ldr = analogRead(A0) / 4;
 //    Serial.print("LDR: ");
 //    Serial.println(ldr);
-    int b = ldr / 4;
-    if (b < eep.data.minBrightness)
-      b = eep.data.minBrightness;
-    matrix.setBrightness(b);
+    _ldrHistory[_ldrHP] = ldr; /* store value in history*/
+    _ldrHP = (_ldrHP + 1) % MAXLDRHIST; /* and increment history pointer */
+
+ 
+    for (uint8_t i = 0; i < MAXLDRHIST; i++) {
+      sensor_ldr += _ldrHistory[i]; /* calculate average. Value range: e.g. 400 = 40.0° * 16 values = 6400, fits in 16 bit integer */
+    }
+    sensor_ldr /= MAXLDRHIST;
+
+    sensor_ldr = (sensor_ldr * eep.data.maxBrightness) >> 8;
+
+    if (sensor_ldr < eep.data.minBrightness)
+      sensor_ldr = eep.data.minBrightness;
+    matrix.setBrightness(sensor_ldr);
+
+  
+//    Serial.print("Temp sensor: ");
+//    Serial.println(sensor_temperature);
   }
 }
 
@@ -1077,7 +1218,7 @@ void doTemperature() {
     last = millis();
 //    Serial.print("Temp raw: ");
 //    Serial.println(sensor.temp());
-    int16_t tmp = round(sensor.temp() * 10) + eep.data.temperatureOffset;
+    int16_t tmp = round(sensor.temp() * 10);
     _tempHistory[_tempHP] = tmp; /* store value in history*/
     _tempHP = (_tempHP + 1) % MAXTEMPHIST; /* and increment history pointer */
   
@@ -1241,7 +1382,7 @@ void setColorToRGB(uint16_t col) {
   Serial.println(hsv_v);*/
 }
 
-#define MAXSELECTEDCOLOR 5 // max color number+1
+// set above: define MAXSELECTEDCOLOR 6 // max color number+1
 void selectColor() {
   Serial.print("Selected Colorset = ");
   Serial.println(eep.data.selectedcolor);
@@ -1255,14 +1396,14 @@ void selectColor() {
       color6 = eep.data.p6i;
       break;
     case 1:
-      color1 = matrix.Color(0xD3, 0xF8, 0xE2);
-      color2 = matrix.Color(0xE4, 0xC1, 0xF9);
-      color3 = matrix.Color(0xF6, 0x94, 0xC1);
-      color4 = matrix.Color(0xED, 0xE7, 0xB1);
-      color5 = matrix.Color(0xA9, 0xDE, 0xF9);
+      color1 = matrix.Color(0xB3, 0xD8, 0xC2);
+      color2 = matrix.Color(0xC4, 0xA1, 0xD9);
+      color3 = matrix.Color(0xD6, 0x74, 0xA1);
+      color4 = matrix.Color(0xCD, 0xC7, 0x91);
+      color5 = matrix.Color(0x89, 0xBE, 0xD9);
       color6 = matrix.Color(0, 255, 0);
       break;
-    case 2:
+    case 2: //bunt
       color1 = matrix.Color(255, 0, 255);
       color2 = matrix.Color(255, 0, 150);
       color3 = matrix.Color(255, 0, 50);
@@ -1279,14 +1420,69 @@ void selectColor() {
       color6 = matrix.Color(0, 255, 0);
       break;
     case 4:
+      color1 = matrix.Color(255, 0, 0);
+      color2 = matrix.Color(255, 0, 0);
+      color3 = matrix.Color(255, 116, 0);
+      color4 = matrix.Color(0, 153, 153);
+      color5 = matrix.Color(0, 204, 0);
+      color6 = matrix.Color(255, 0, 0);
+      break;
+    case 5: // red
+      color1 = matrix.Color(255, 0, 0);
+      color2 = matrix.Color(255, 0, 0);
+      color3 = matrix.Color(128, 0, 0);
+      color4 = matrix.Color(255, 0, 0);
+      color5 = matrix.Color(128, 0, 0);
+      color6 = matrix.Color(255, 0, 0);
+      break;
+    case 6: // green
+      color1 = matrix.Color(0, 255, 0);
+      color2 = matrix.Color(0, 255, 0);
+      color3 = matrix.Color(0, 128, 0);
+      color4 = matrix.Color(0, 255, 0);
+      color5 = matrix.Color(0, 128, 0);
+      color6 = matrix.Color(0, 255, 0);
+      break;
+    case 7: // blue
+      color1 = matrix.Color(0, 0, 255);
+      color2 = matrix.Color(0, 0, 255);
+      color3 = matrix.Color(0, 0, 128);
+      color4 = matrix.Color(0, 0, 255);
+      color5 = matrix.Color(0, 0, 128);
+      color6 = matrix.Color(0, 0, 255);
+      break;
+    case 8: // yellow
+      color1 = matrix.Color(255, 255, 0);
+      color2 = matrix.Color(255, 255, 0);
+      color3 = matrix.Color(128, 128, 0);
+      color4 = matrix.Color(255, 255, 0);
+      color5 = matrix.Color(128, 128, 0);
+      color6 = matrix.Color(255, 255, 0);
+      break;
+    case 9: // magenta
+      color1 = matrix.Color(255, 0, 255);
+      color2 = matrix.Color(255, 0, 255);
+      color3 = matrix.Color(128, 0, 128);
+      color4 = matrix.Color(255, 0, 255);
+      color5 = matrix.Color(128, 0, 128);
+      color6 = matrix.Color(255, 0, 255);
+      break;
+    case 10: // cyan
+      color1 = matrix.Color(0, 255, 255);
+      color2 = matrix.Color(0, 255, 255);
+      color3 = matrix.Color(0, 128, 128);
+      color4 = matrix.Color(0, 255, 255);
+      color5 = matrix.Color(0, 128, 128);
+      color6 = matrix.Color(0, 255, 255);
+      break;
+    case 11: // white
       color1 = matrix.Color(255, 255, 255);
       color2 = matrix.Color(255, 255, 255);
-      color3 = matrix.Color(255, 255, 255);
+      color3 = matrix.Color(128, 128, 128);
       color4 = matrix.Color(255, 255, 255);
-      color5 = matrix.Color(255, 255, 255);
+      color5 = matrix.Color(128, 128, 128);
       color6 = matrix.Color(255, 255, 255);
-      break;
-/*    case :
+      break;/*    case :
       color1 = matrix.Color(0x, 0x, 0x);
       color2 = matrix.Color(0x, 0x, 0x);
       color3 = matrix.Color(0x, 0x, 0x);
